@@ -19,9 +19,9 @@ import (
 
 const (
 	keyFile   = "image-file"
-	keyWidth  = "image-width"
-	keyHeight = "image-height"
-	keyFormat = "image-format"
+	keyWidth  = "width"
+	keyFormat = "format"
+	keyQuality = "quality"
 )
 
 var (
@@ -71,16 +71,6 @@ func main() {
     }
 		
 		// Get height from the args
-    sheight := r.FormValue(keyHeight)
-    height, err := parseSize(sheight)
-    if err != nil {
-      logger.ErrorContext(r.Context(), "Failed to parse height", "err", err)
-      w.WriteHeader(http.StatusBadRequest)
-      w.Write([]byte("Bad Request. Invalid height."))
-      return
-    }
-
-		// Get height from the args
     format, err := parseFormat(r.FormValue(keyFormat))
     if err != nil {
       logger.ErrorContext(r.Context(), "Failed to parse format", "err", err)
@@ -90,7 +80,7 @@ func main() {
     }
 
 		// Get the file
-		f, fh, err := r.FormFile(keyFile)
+		f, _, err := r.FormFile(keyFile)
 		if err != nil {
 			logger.ErrorContext(r.Context(), "Failed to get file", "err", err)
 			w.WriteHeader(http.StatusBadRequest)
@@ -108,8 +98,67 @@ func main() {
       return
     }
 
-		// Process the request
-		// ...
+    // Make the image
+    img, err := vips.NewImageFromBuffer(buf)
+    if err != nil {
+      logger.ErrorContext(r.Context(), "Failed to create image", "err", err)
+      w.WriteHeader(http.StatusInternalServerError)
+      w.Write([]byte("Internal Server Error"))
+      return
+    }
+
+    // Resize the image
+    if width > 0 {
+      resize := float64(width) / float64(img.Width())
+      if err := img.Resize(resize, vips.KernelLanczos3); err != nil {
+        logger.ErrorContext(r.Context(), "Failed to resize image", "err", err)
+        w.WriteHeader(http.StatusInternalServerError)
+        w.Write([]byte("Internal Server Error"))
+        return
+      }
+    }
+
+    // Encode the image
+    var out []byte
+    switch format {
+    case "jpeg":
+      out, _, err = img.ExportJpeg(&vips.JpegExportParams{
+        StripMetadata: true,
+        Quality: 80,
+      })
+    case "webp":
+      out, _, err = img.ExportWebp(&vips.WebpExportParams{
+        StripMetadata: true,
+        Quality: 80,
+      })
+    case "avif":
+      out, _, err = img.ExportAvif(&vips.AvifExportParams{
+        StripMetadata: true,
+        Quality: 80,
+      })
+    default:
+      logger.ErrorContext(
+        r.Context(),
+        "Invalid format. How'd that get here!",
+        "format", format,
+      )
+      w.WriteHeader(http.StatusInternalServerError)
+      w.Write([]byte("Internal Server Error"))
+      return
+    }
+    if err != nil {
+      logger.ErrorContext(r.Context(), "Failed to encode image", "err", err)
+      w.WriteHeader(http.StatusInternalServerError)
+      w.Write([]byte("Internal Server Error"))
+      return
+    }
+
+    // Write the image
+    w.Header().Set("Content-Type", "image/"+format)
+    w.Header().Set("Content-Length", strconv.Itoa(len(out)))
+    w.WriteHeader(http.StatusOK)
+    w.Write(out)
+
 	})
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
