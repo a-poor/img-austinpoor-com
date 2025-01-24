@@ -70,6 +70,18 @@ func main() {
       return
     }
 		
+    // Get width from the args
+    qual := 80
+		if squal := r.FormValue(keyQuality); squal != "" {
+      qual, err = parseSize(squal)
+      if err != nil {
+        logger.ErrorContext(r.Context(), "Failed to parse quality", "err", err)
+        w.WriteHeader(http.StatusBadRequest)
+        w.Write([]byte("Bad Request. Invalid quality."))
+        return
+      }
+    }
+		
 		// Get height from the args
     format, err := parseFormat(r.FormValue(keyFormat))
     if err != nil {
@@ -124,17 +136,17 @@ func main() {
     case "jpeg":
       out, _, err = img.ExportJpeg(&vips.JpegExportParams{
         StripMetadata: true,
-        Quality: 80,
+        Quality: qual,
       })
     case "webp":
       out, _, err = img.ExportWebp(&vips.WebpExportParams{
         StripMetadata: true,
-        Quality: 80,
+        Quality: qual,
       })
     case "avif":
       out, _, err = img.ExportAvif(&vips.AvifExportParams{
         StripMetadata: true,
-        Quality: 80,
+        Quality: qual,
       })
     default:
       logger.ErrorContext(
@@ -175,7 +187,7 @@ func main() {
 	// Start the server
 	svr := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler:      makeLogMiddleware(logger)(mux),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  15 * time.Second,
@@ -226,6 +238,9 @@ func makeLogMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 			// Add the request ID to the context
 			ctx := context.WithValue(r.Context(), "requestId", rid.String())
 			logger.DebugContext(ctx, "Request received")
+
+      // Add the request ID to the response
+      w.Header().Set("X-Request-ID", rid.String())
 
 			// Call the next handler
 			start := time.Now()
