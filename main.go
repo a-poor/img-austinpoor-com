@@ -2,20 +2,26 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/davidbyttow/govips/v2/vips"
 	"github.com/google/uuid"
 )
 
 const (
-	keyFile = "image-file"
-	keySize = "image-size"
+	keyFile   = "image-file"
+	keyWidth  = "image-width"
+	keyHeight = "image-height"
+	keyFormat = "image-format"
 )
 
 var (
@@ -54,7 +60,53 @@ func main() {
 			return
 		}
 
+		// Get width from the args
+		swidth := r.FormValue(keyWidth)
+    width, err := parseSize(swidth)
+    if err != nil {
+      logger.ErrorContext(r.Context(), "Failed to parse width", "err", err)
+      w.WriteHeader(http.StatusBadRequest)
+      w.Write([]byte("Bad Request. Invalid width."))
+      return
+    }
+		
+		// Get height from the args
+    sheight := r.FormValue(keyHeight)
+    height, err := parseSize(sheight)
+    if err != nil {
+      logger.ErrorContext(r.Context(), "Failed to parse height", "err", err)
+      w.WriteHeader(http.StatusBadRequest)
+      w.Write([]byte("Bad Request. Invalid height."))
+      return
+    }
+
+		// Get height from the args
+    format, err := parseFormat(r.FormValue(keyFormat))
+    if err != nil {
+      logger.ErrorContext(r.Context(), "Failed to parse format", "err", err)
+      w.WriteHeader(http.StatusBadRequest)
+      w.Write([]byte("Bad Request. Invalid format."))
+      return
+    }
+
 		// Get the file
+		f, fh, err := r.FormFile(keyFile)
+		if err != nil {
+			logger.ErrorContext(r.Context(), "Failed to get file", "err", err)
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("Bad Request"))
+			return
+		}
+    defer f.Close()
+
+    // Read the image to a buffer
+    buf, err := io.ReadAll(f)
+    if err != nil {
+      logger.ErrorContext(r.Context(), "Failed to read file", "err", err)
+      w.WriteHeader(http.StatusInternalServerError)
+      w.Write([]byte("Internal Server Error"))
+      return
+    }
 
 		// Process the request
 		// ...
@@ -144,4 +196,23 @@ func makeLogMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 			)
 		})
 	}
+}
+
+func parseFormat(f string) (string, error) {
+	switch f {
+	case "jpeg", "webp", "avif":
+		return f, nil
+	}
+	return "", fmt.Errorf("invalid format %q", f)
+}
+
+func parseSize(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	if n < 1 || n > 4096 {
+		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	return n, nil
 }
